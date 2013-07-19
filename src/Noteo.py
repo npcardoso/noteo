@@ -354,14 +354,15 @@ class Noteo:
 
     def _handle_event(self, event):
         self.logger.debug("handling event (%s)" % event)
+        if event.recurring_delay >= 0:
+            self._event_queue.push(time.time() + event.recurring_delay, event)
+
         if isinstance(event, HandleableEvent):
             event.handle()
         else:
             for module in self._modules:
                 module.handle_event(event)
         event.handled()
-        if event.recurring_delay >= 0:
-            self._event_queue.push(time.time() + event.recurring_delay, event)
 
     def start(self):
         self._event_queue.start_thread()
