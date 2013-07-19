@@ -65,6 +65,7 @@ class MPD(NoteoModule):
             currentsong = self.client.currentsong()
             playing = (self.client.status()['state'] == 'play')
         except:
+            self.noteo.invalidate_event(self._event_id)
             self.noteo.logger.error("Connection to mpd was lost")
             event = FunctionCallEvent(self._reconnect)
             event.recurring_delay = self.config['timeBetweenReconnectionAttempts']
@@ -87,8 +88,10 @@ class MPD(NoteoModule):
         except:
             pass
         try:
+            self.client = mpd.MPDClient()
+            self.noteo.logger.debug("Trying to connect to MPD", self.config['host'], self.config['port'])
             self.client.connect(self.config['host'], self.config['port'])
-            self.noteo.debug("Reconnected to MPD")
+            self.noteo.logger.debug("Reconnected to MPD")
             event = FunctionCallEvent(self._update)
             event.recurring_delay = self.config['pollInterval']
             self._update_recurring_event(event)
