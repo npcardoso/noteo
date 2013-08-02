@@ -257,7 +257,10 @@ class ThreadedEventQueue:
                     self._condition.wait(self._queue[0][0] - time.time())
                 else:
                     ev = heapq.heappop(self._queue)[1]
-                    self._callback[0](ev, *self._callback[1], **self._callback[2])
+                    try:
+                        self._callback[0](ev, *self._callback[1], **self._callback[2])
+                    except Exception as e:
+                        self.logger.error("Error occured: %s" % e)
 
     def replace(self, event_id, event):
         with self._lock:
@@ -358,10 +361,17 @@ class Noteo:
             self._event_queue.push(time.time() + event.recurring_delay, event)
 
         if isinstance(event, HandleableEvent):
-            event.handle()
+            try:
+                event.handle()
+            except Exception as e:
+                self.logger.error("Error handling event %s: %s\n%s" % (event, e, sys.exc_info()))
         else:
             for module in self._modules:
-                module.handle_event(event)
+                try:
+                    module.handle_event(event)
+                except Exception as e:
+                    self.logger.error("Error handling event %s: %s\n%s" % (event, e, sys.exc_info()))
+
         event.handled()
 
     def start(self):
