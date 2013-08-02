@@ -131,7 +131,7 @@ class IMAPCheck(NoteoModule):
 
             tmp = line[0]
             if line[1] is not None:
-                tmp = tmp.decode(line[1])
+                tmp = tmp.decode(line[1], 'replace')
             if max_len:
                 tmp = (tmp[:max_len] + '..') if len(tmp) > max_len else tmp
             content.append(tmp)
@@ -144,11 +144,11 @@ class IMAPCheck(NoteoModule):
         for part in message.walk():
             if part.get_content_type() == "text/plain":
                 text = part.get_payload(decode=True)
-                text = text.decode(part.get_content_charset('utf-8'))
+                text = text.decode(part.get_content_charset('utf-8'), 'replace')
                 break
             elif part.get_content_type() == "text/html":
                 text = part.get_payload(decode=True)
-                text = text.decode(part.get_content_charset('utf-8'))
+                text = text.decode(part.get_content_charset('utf-8'), 'replace')
         text = text.replace('\r', '\n')
         text = [x.strip() for x in text.split('\n') if len(x.strip())]
         if len(text) > self.config['linesOfContent']:
