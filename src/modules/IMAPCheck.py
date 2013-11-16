@@ -8,10 +8,91 @@ from xml.sax.saxutils import escape
 
 from Noteo import *
 
+class Mail(object):
+    def _wrap(self, text, width):
+        return reduce(lambda line, word, width=width: '%s%s%s' %
+                      (line,
+                       ' \n'[(len(line)-line.rfind('\n')-1
+                              + len(word.split('\n',1)[0]
+                                ) >= width)],
+                       word),
+                      text.split(' ')
+        )
+
+    def _decode(self, string, join=" ", max_items=0, max_len=0, wrap=0):
+        if not isinstance(string, basestring):
+            return ""
+
+        decoded_header = decode_header(string.strip())
+
+        content = []
+        for line in decoded_header:
+            max_items = max_items - 1
+            if max_items == 0:
+                break
+
+            tmp = line[0]
+            if line[1] is not None:
+                tmp = tmp.decode(line[1], 'replace')
+            if max_len:
+                tmp = (tmp[:max_len] + '..') if len(tmp) > max_len else tmp
+            content.append(tmp)
+        ret = join.join(content)
+        if wrap > 0:
+            ret = ret.splitlines()
+            for i in range(len(ret)):
+                ret[i] = self._wrap(ret[i], wrap)
+            ret = "\n".join(ret)
+
+        return ret
+
+    def _get_content(self, message, loc=0, wrap=0):
+        if loc == 0:
+            return ""
+        text = ""
+        for part in message.walk():
+            if part.get_content_type() == "text/plain":
+                text = part.get_payload(decode=True)
+                text = text.decode(part.get_content_charset('utf-8'), 'replace')
+                break
+            elif part.get_content_type() == "text/html":
+                text = part.get_payload(decode=True)
+                text = text.decode(part.get_content_charset('utf-8'), 'replace')
+        text = text.replace('\r', '\n')
+        text = re.sub('<[^<]+?>', '', text)
+        text = re.sub('&[^;]*;', '', text)
+        text = re.sub('<', '', text)
+        text = re.sub('>', '', text)
+        text = re.sub('&', '', text)
+
+        text = [x.strip() for x in text.split('\n') if len(x.strip())]
+
+        if loc > 0:
+            text = text [:loc]
+        if wrap > 0:
+            for i in range(len(text)):
+                text[i] = self._wrap(text[i], wrap)
+        text = "\n".join(text)
+        return text
+
+    def format(self, sender_format, subject_format, message_format, loc, wrap):
+        sender = self._decode(self._message['from'].split(' ')[0].strip('"'), wrap=wrap)
+        subject = self._decode(self._message['subject'], wrap=wrap)
+        message = self._get_content(self._message, wrap=wrap, loc=loc)
+
+        content = sender_format % escape(sender)
+        content += subject_format % escape(subject)
+        content += message_format % escape(message)
+        return content
+
+    def __init__(self, message):
+        self._message = message
+
 
 class MailTracker:
     def __init__(self, server, port, ssl, username, password, interval, retries=1):
         self._unread = []
+        self._notification_id = None
 
         self.server = server
         self.port = port
@@ -32,7 +113,7 @@ class MailTracker:
             conn = imaplib.IMAP4_SSL(self.server, self.port)
         else:
             conn = imaplib.IMAP4(self.server, self.port)
-        conn.login(self.username, 
+        conn.login(self.username,
                    self.password)
         conn.select(readonly=1) # Select inbox or default namespace
         return conn
@@ -74,8 +155,9 @@ class MailTracker:
                         if retcode != 'OK':
                             raise imaplib.IMAP4.error("Error return code: %s" % retcode)
                         content = email.message_from_string(data[0][1])
+                        m = Mail(content)
                         with self.lock:
-                            self._unread.append(content)
+                            self._unread.append(m)
                         self.last_unseen.add(uid)
                     conn.close()
                     conn.logout()
@@ -85,124 +167,113 @@ class MailTracker:
 
             time.sleep(self.interval)
 
-    def check(self):
+    def check(self, noteo, config):
         with self.lock:
-            tmp = self._unread
+            self._do_stuff(noteo, config)
+
+    def _do_stuff(self, noteo, config):
+        if self._notification_id is not None:
+            return
+        if not self._unread:
+            return
+
+        if config['simultaneous'] == 0:
+            mails = self._unread
             self._unread = []
-        return tmp
+        else:
+            mails = self._unread[:config['simultaneous']]
+            self._unread = self._unread[config['simultaneous']:]
+
+        suffix = ''
+        if len(mails) > 1:
+            suffix = 's'
+        summary = config['header_line'] % (len(mails), suffix, self.username, self.server)
+
+
+        content = ""
+        for m in mails:
+            content += m.format(config['from_line'],
+                                config['subject_line'],
+                                config['message_line'],
+                                config['linesOfContent'],
+                                config['wrap'])
+
+
+        notification = NotificationEvent(summary,
+                                         content,
+                                         'mail_new',
+                                         timeout=config['notificationTimeout'])
+
+        noteo.add_event(notification)
+        self._notification_id = notification.event_id
+
+    def invalidate_event(self, event_id, noteo, config):
+        if event_id == self._notification_id:
+            self._notification_id = None
+        self.check(noteo, config)
+
+
 
 class IMAPCheck(NoteoModule):
     config_spec = {
         'checkInterval': 'float(default=120)',
         'notificationTimeout': 'float(default=10)',
-        'linesOfContent': 'integer(default=2)',
+        'wrap': 'integer(default=-1)',
+        'linesOfContent': 'integer(default=-1)',
+        'simultaneous': 'integer(default=4)',
         'username': 'list(default=list(username1, username2))',
         'password': 'list(default=list(password1, password2))',
         'server': 'list(default=list(password1, password2))',
         'mailbox': 'list(default=list(inbox, inbox))',
         'port': 'list(default=list(password1, password2))',
         'ssl': 'list(default=list(password1, password2))',
+        'header_line': 'string(default="<span size=\"large\"><b>You have <span foreground=\"red\">%d</span> new message%s (%s@%s)</b></span>\n")',
+        'from_line' : 'string(default="<span size=\"large\"><b>From: %s</b></span>\n")',
+        'subject_line' : 'string(default="<b>Subject: %s</b>\n")',
+        'message_line' : 'string(default="<i>%s</i>\n\n")',
     }
-    connections = None
 
-    header_line = '<span size=\"large\"><b>You have <span foreground=\"red\">%d</span> new message%s (%s@%s)</b></span>\n'
-    from_line = '<span size=\"large\"><b>From: %s</b></span>\n'
-    subject_line = 'Subject: %s\n'
     def init(self):
         update_event = FunctionCallEvent(self.check)
         update_event.recurring_delay = 2
+
+        self._connections = None
+
         self.noteo.add_event(update_event)
 
-        self.noteo.add_event(FunctionCallEvent(self.create_connections))
+        self.noteo.add_event(FunctionCallEvent(self._create_connections))
 
         self.noteo.add_event(CreateMenuItemEvent("Check mail now",
                                                  self.check,
                                                  icon='stock_mail')) #TODO: Add conditions to handle this
 
-
-    def decode(self, string, join=" ", max_items=0, max_len=0):
-        decoded_header = decode_header(string.strip())
-
-        content = []
-        for line in decoded_header:
-            max_items = max_items - 1
-            if max_items == 0:
-                break
-
-            tmp = line[0]
-            if line[1] is not None:
-                tmp = tmp.decode(line[1], 'replace')
-            if max_len:
-                tmp = (tmp[:max_len] + '..') if len(tmp) > max_len else tmp
-            content.append(tmp)
-        return join.join(content)
-
-    def get_content(self, message):
-        if self.config['linesOfContent'] == 0:
-            return ""
-        text = ""
-        for part in message.walk():
-            if part.get_content_type() == "text/plain":
-                text = part.get_payload(decode=True)
-                text = text.decode(part.get_content_charset('utf-8'), 'replace')
-                break
-            elif part.get_content_type() == "text/html":
-                text = part.get_payload(decode=True)
-                text = text.decode(part.get_content_charset('utf-8'), 'replace')
-        text = text.replace('\r', '\n')
-        text = [x.strip() for x in text.split('\n') if len(x.strip())]
-        if len(text) > self.config['linesOfContent']:
-            text = text [:self.config['linesOfContent']]
-        text = "\n".join(text)
-        text = re.sub('<[^<]+?>', '', text)
-        text = re.sub('&[^;]*;', '', text)
-        text = re.sub('<', '', text)
-        text = re.sub('>', '', text)
-        text = re.sub('&', '', text)
-        return text
+    def invalidate_event(self, event_id):
+        for conn in self._connections:
+            conn.invalidate_event(event_id, self.noteo, self.config)
 
     def check(self):
         self.noteo.logger.debug("Checking mail...")
-        if self.connections is None:
+        if self._connections is None:
             return
-        for i in range(len(self.connections)):
-            conn = self.connections[i]
-            unread = conn.check()
-            if len(unread) == 0:
-                continue
-            suffix = ''
-            if len(unread) > 1:
-                suffix = 's'
-            summary = self.header_line % (len(unread), suffix, conn.username, conn.server)
+        for conn in self._connections:
+            conn.check(self.noteo, self.config)
 
-            content = ""
-            for message in unread:
-                _from = message['from'].split(' ')
-                _from[0] = self.decode(_from[0].strip('"'))
-                _subject = self.decode(message['subject'])
 
-                content += self.from_line % escape(_from[0])
-                content += self.subject_line % escape(_subject)
-                content += "<i>%s</i>\n\n" % escape(self.get_content(message))
-
-            self.noteo.add_event(NotificationEvent(summary,
-                                                   content,
-                                                   'mail_new',
-                                                   timeout=self.config['notificationTimeout']))
         return True
 
-    def create_connections(self):
+    def _create_connections(self):
         server = self.config['server']
         port = self.config['port']
         ssl = self.config['ssl']
         username = self.config['username']
         password = self.config['password']
-        password = self.config['password']
 
         connections = []
         for i in range(len(server)):
             connections.append(MailTracker(server[i], port[i], ssl[i], username[i], password[i], float(self.config['checkInterval'])))
-        self.connections = connections
+
+        self._connections = connections
+
         self.check()
-            
+
 module = IMAPCheck
