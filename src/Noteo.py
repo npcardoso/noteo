@@ -22,6 +22,7 @@ import logging
 import os
 import sys
 import threading
+import traceback
 import uuid
 try:
     import glib
@@ -236,12 +237,13 @@ class NoteoModule(object):
     def invalidate_event(self, event_id):
         '''invalidate_event(event_id)
         this is called when an event is made invalid before it is due to be
-        called. If the event doesn't exist, then this should gracefully do 
+        called. If the event doesn't exist, then this should gracefully do
         nothing'''
         pass
 
 class ThreadedEventQueue:
-    def __init__(self, callback, *args, **kargs):
+    def __init__(self, logger, callback, *args, **kargs):
+        self._logger = logger
         self._lock = threading.RLock()
         self._condition = threading.Condition(self._lock)
         self._queue = []
@@ -260,7 +262,7 @@ class ThreadedEventQueue:
                     try:
                         self._callback[0](ev, *self._callback[1], **self._callback[2])
                     except Exception as e:
-                        self.logger.error("Error occured: %s" % e)
+                        self._logger.error("Error occured: %s" % e)
 
     def replace(self, event_id, event):
         with self._lock:
@@ -302,7 +304,7 @@ class Noteo:
     config_dir = os.path.expandvars('$HOME/.config/noteo')
 
     def __init__(self, load_modules = True):
-        self._event_queue = ThreadedEventQueue(self._handle_event)
+        self._event_queue = ThreadedEventQueue(self.logger ,self._handle_event)
 
         self._configure()
         self._modules = []
@@ -350,7 +352,7 @@ class Noteo:
             self._modules.append(module)
         except:
             self.logger.error("Errors occured when importing the module %s" % module_name)
-            self.logger.error("The error were: %s" % str(sys.exc_info()))
+            self.logger.error("The error were: %s" % traceback.format_exc())
             #raise
         finally:
             sys.path.pop()
@@ -364,13 +366,13 @@ class Noteo:
             try:
                 event.handle()
             except Exception as e:
-                self.logger.error("Error handling event %s: %s\n%s" % (event, e, sys.exc_info()))
+                self.logger.error("Error handling event %s: %s\n%s" % (event, e, traceback.format_exc()))
         else:
             for module in self._modules:
                 try:
                     module.handle_event(event)
                 except Exception as e:
-                    self.logger.error("Error handling event %s: %s\n%s" % (event, e, sys.exc_info()))
+                    self.logger.error("Error handling event %s: %s\n%s" % (event, e, traceback.forma_exc()))
 
         event.handled()
 
