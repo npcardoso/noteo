@@ -2,6 +2,7 @@ import email
 from email.header import decode_header
 import imaplib
 import re
+import string
 import time
 import threading
 from xml.sax.saxutils import escape
@@ -46,7 +47,7 @@ class Mail(object):
 
         return ret
 
-    def _get_content(self, message, loc=0, wrap=0):
+    def _get_content(self, message, loc=0, wrap=0, ignore=None):
         if loc == 0:
             return ""
         text = ""
@@ -59,9 +60,16 @@ class Mail(object):
                 text = part.get_payload(decode=True)
                 text = text.decode(part.get_content_charset('utf-8'), 'replace')
         text = text.replace('\r', '\n')
+
+        if ignore:
+            for rexp in ignore:
+                text =  re.sub(rexp, '', text,flags=re.MULTILINE)
+
         text = re.sub('<[^<]+?>', '', text)
         text = re.sub('&[^;]*;', '', text)
+
         text = re.sub('<', '', text)
+
         text = re.sub('>', '', text)
         text = re.sub('&', '', text)
 
@@ -75,10 +83,15 @@ class Mail(object):
         text = "\n".join(text)
         return text
 
-    def format(self, sender_format, subject_format, message_format, loc, wrap):
-        sender = self._decode(self._message['from'].split(' ')[0].strip('"'), wrap=wrap)
+    def format(self, sender_format, subject_format, message_format, loc, wrap, ignore):
+        sender = self._message['from']
+        sender = sender[:string.find(sender, '<')]
+        sender = sender.strip()
+        sender = sender.strip('"')
+        sender = self._decode(sender, wrap=wrap)
+
         subject = self._decode(self._message['subject'], wrap=wrap)
-        message = self._get_content(self._message, wrap=wrap, loc=loc)
+        message = self._get_content(self._message, wrap=wrap, loc=loc, ignore=ignore)
 
         content = sender_format % escape(sender)
         content += subject_format % escape(subject)
@@ -196,7 +209,8 @@ class MailTracker:
                                 config['subject_line'],
                                 config['message_line'],
                                 config['linesOfContent'],
-                                config['wrap'])
+                                config['wrap'],
+                                config['ignore'])
 
 
         notification = NotificationEvent(summary,
@@ -219,6 +233,7 @@ class IMAPCheck(NoteoModule):
         'checkInterval': 'float(default=120)',
         'notificationTimeout': 'float(default=10)',
         'wrap': 'integer(default=-1)',
+        'ignore': 'list(default=list(^\s*>.*$, ^\s*[Oo]n.*wrote.*$))',
         'linesOfContent': 'integer(default=-1)',
         'simultaneous': 'integer(default=4)',
         'username': 'list(default=list(username1, username2))',
