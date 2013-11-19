@@ -85,7 +85,9 @@ class Mail(object):
 
     def format(self, sender_format, subject_format, message_format, loc, wrap, ignore):
         sender = self._message['from']
-        sender = sender[:string.find(sender, '<')]
+        end_sender = string.find(sender, '<')
+        if end_sender >= 0:
+            sender = sender[:end_sender]
         sender = sender.strip()
         sender = sender.strip('"')
         sender = self._decode(sender, wrap=wrap)
