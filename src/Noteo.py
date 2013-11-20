@@ -262,7 +262,8 @@ class ThreadedEventQueue:
                     try:
                         self._callback[0](ev, *self._callback[1], **self._callback[2])
                     except Exception as e:
-                        self._logger.error("Error occured: %s" % e)
+                        self._logger.error(traceback.format_exc())
+
 
     def replace(self, event_id, event):
         with self._lock:
@@ -321,7 +322,7 @@ class Noteo:
         config_spec = {
             'localmodules': 'list(default=list(\'\'))',
             'modules': 'list(default=list(BatteryCheck, Dmesg, Xmms2, MPD, StatusIcon, Notify, Popup, PacmanCheck, DesktopDisplay))',
-            'debugLevel': 'integer(default=30)', #logger.WARNING = 30 
+            'debugLevel': 'integer(default=30)', #logger.WARNING = 30
             'qt_recurring_delay': 'float(default=0.1)',
             'gtk_recurring_delay': 'float(default=0.1)'
             }
@@ -351,8 +352,8 @@ class Noteo:
             module = __import__(module_name).module(self, path)
             self._modules.append(module)
         except:
-            self.logger.error("Errors occured when importing the module %s" % module_name)
-            self.logger.error("The error were: %s" % traceback.format_exc())
+            self.logger.error("While importing the module %s" % module_name)
+            self.logger.error(traceback.format_exc())
             #raise
         finally:
             sys.path.pop()
@@ -366,13 +367,13 @@ class Noteo:
             try:
                 event.handle()
             except Exception as e:
-                self.logger.error("Error handling event %s: %s\n%s" % (event, e, traceback.format_exc()))
+                self.logger.error("While handling event %s: %s\n%s" % (event, e, traceback.format_exc()))
         else:
             for module in self._modules:
                 try:
                     module.handle_event(event)
                 except Exception as e:
-                    self.logger.error("Error handling event %s: %s\n%s" % (event, e, traceback.forma_exc()))
+                    self.logger.error("While handling event %s: %s\n%s" % (event, e, traceback.format_exc()))
 
         event.handled()
 
@@ -435,7 +436,7 @@ class Noteo:
             self.logger.warning("pyqt4 is not installed, therefore no qt support")
             return
         if not self.qt_is_required:
-            self.logger.debug("Not already set-up. Setting up...")    
+            self.logger.debug("Not already set-up. Setting up...")
             self.qt_app = QtGui.QApplication(sys.argv)
             event = FunctionCallEvent(self.qt_update)
             event.recurring_delay = self.qt_recurring_delay()
