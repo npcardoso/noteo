@@ -8,7 +8,6 @@ import threading
 from xml.sax.saxutils import escape
 
 from Noteo import *
-
 class Mail(object):
     def _wrap(self, text, width):
         return reduce(lambda line, word, width=width: '%s%s%s' %
@@ -20,7 +19,7 @@ class Mail(object):
                       text.split(' ')
         )
 
-    def _decode(self, string, join=" ", max_items=0, max_len=0, wrap=0):
+    def _decode(self, string, config, join=" ", max_items=0, max_len=0):
         if not isinstance(string, basestring):
             return ""
 
@@ -39,6 +38,8 @@ class Mail(object):
                 tmp = (tmp[:max_len] + '..') if len(tmp) > max_len else tmp
             content.append(tmp)
         ret = join.join(content)
+
+        wrap = config['wrap']
         if wrap > 0:
             ret = ret.splitlines()
             for i in range(len(ret)):
@@ -47,9 +48,11 @@ class Mail(object):
 
         return ret
 
-    def _get_content(self, message, loc=0, wrap=0, ignore=None):
+    def _get_content(self, message, config):
+        loc = config['linesOfContent']
         if loc == 0:
             return ""
+
         text = ""
         for part in message.walk():
             if part.get_content_type() == "text/plain":
@@ -61,9 +64,8 @@ class Mail(object):
                 text = text.decode(part.get_content_charset('utf-8'), 'replace')
         text = text.replace('\r', '\n')
 
-        if ignore:
-            for rexp in ignore:
-                text =  re.sub(rexp, '', text,flags=re.MULTILINE)
+        for rexp in config['ignore']:
+            text =  re.sub(rexp, '', text,flags=re.MULTILINE)
 
         text = re.sub('<[^<]+?>', '', text)
         text = re.sub('&[^;]*;', '', text)
@@ -77,27 +79,29 @@ class Mail(object):
 
         if loc > 0:
             text = text [:loc]
+
+        wrap = config['wrap']
         if wrap > 0:
             for i in range(len(text)):
                 text[i] = self._wrap(text[i], wrap)
         text = "\n".join(text)
         return text
 
-    def format(self, sender_format, subject_format, message_format, loc, wrap, ignore):
+    def format(self, config):
         sender = self._message['from']
         end_sender = string.find(sender, '<')
         if end_sender >= 0:
             sender = sender[:end_sender]
         sender = sender.strip()
         sender = sender.strip('"')
-        sender = self._decode(sender, wrap=wrap)
+        sender = self._decode(sender, config)
 
-        subject = self._decode(self._message['subject'], wrap=wrap)
-        message = self._get_content(self._message, wrap=wrap, loc=loc, ignore=ignore)
+        subject = self._decode(self._message['subject'], config)
+        message = self._get_content(self._message, config)
 
-        content = sender_format % escape(sender)
-        content += subject_format % escape(subject)
-        content += message_format % escape(message)
+        content = config['sender_format'] % escape(sender)
+        content += config['subject_format'] % escape(subject)
+        content += config['message_format'] % escape(message)
         return content
 
     def __init__(self, message):
@@ -202,17 +206,12 @@ class MailTracker:
         suffix = ''
         if len(mails) > 1:
             suffix = 's'
-        summary = config['header_line'] % (len(mails), suffix, self.username, self.server)
+        summary = config['header_format'] % (len(mails), suffix, self.username, self.server)
 
 
         content = ""
         for m in mails:
-            content += m.format(config['from_line'],
-                                config['subject_line'],
-                                config['message_line'],
-                                config['linesOfContent'],
-                                config['wrap'],
-                                config['ignore'])
+            content += m.format(config)
 
 
         notification = NotificationEvent(summary,
@@ -235,7 +234,7 @@ class IMAPCheck(NoteoModule):
         'checkInterval': 'float(default=120)',
         'notificationTimeout': 'float(default=10)',
         'wrap': 'integer(default=-1)',
-        'ignore': 'list(default=list(^\s*>.*$, ^\s*[Oo]n.*wrote.*$))',
+        'ignore': 'list(default=list("^\\s*>.*$", "^\\s*[Oo]n.*wrote.*$", "^\s*[^\\s\\b]{10,}\s*$"))',
         'linesOfContent': 'integer(default=-1)',
         'simultaneous': 'integer(default=4)',
         'username': 'list(default=list(username1, username2))',
@@ -244,10 +243,10 @@ class IMAPCheck(NoteoModule):
         'mailbox': 'list(default=list(inbox, inbox))',
         'port': 'list(default=list(password1, password2))',
         'ssl': 'list(default=list(password1, password2))',
-        'header_line': 'string(default="<span size=\"large\"><b>You have <span foreground=\"red\">%d</span> new message%s (%s@%s)</b></span>\n")',
-        'from_line' : 'string(default="<span size=\"large\"><b>From: %s</b></span>\n")',
-        'subject_line' : 'string(default="<b>Subject: %s</b>\n")',
-        'message_line' : 'string(default="<i>%s</i>\n\n")',
+        'header_format': 'string(default="<span size=\"large\"><b>You have <span foreground=\"red\">%d</span> new message%s (%s@%s)</b></span>\n")',
+        'sender_format' : 'string(default="<span size=\"large\"><b>From: %s</b></span>\n")',
+        'subject_format' : 'string(default="<b>Subject: %s</b>\n")',
+        'message_format' : 'string(default="<i>%s</i>\n\n")',
     }
 
     def init(self):
